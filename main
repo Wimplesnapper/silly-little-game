@@ -170,10 +170,12 @@ while running:
 
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_w:
-                if jumps_made < 2 and not jump_pressed:
+                max_jumps = 1 if player_big else 2
+                if jumps_made < max_jumps and not jump_pressed:
                     player_vel_y = jump_strength
                     jumps_made += 1
                     jump_pressed = True
+
 
         elif event.type == pygame.KEYUP:
             if event.key == pygame.K_w:
@@ -284,8 +286,8 @@ while running:
                 if not seen_big_instructions:
                     instructions_to_show = [
                         "You are THICC!",
-                        "Don't stay still while THICC or else die!"
-                    ]
+                        "Don't stay still while THICC or else die!",
+                        "You can't double jump while THICC!" ]
                     instruction_timer = FPS * 5  # 5 seconds
                     seen_big_instructions = True  # Assign directly, no global here
 
