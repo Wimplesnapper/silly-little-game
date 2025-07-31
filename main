@@ -35,7 +35,7 @@ on_ground = False
 
 # --- Jump tracking ---
 jumps_made = 0
-jump_pressed = False  # Track jump key press state
+jump_pressed = False
 
 # --- Camera ---
 camera_x = 0
@@ -52,17 +52,21 @@ score = 0
 next_zone_x = 700
 world_end_x = 2000
 
-# --- Power-up / Big state ---
+# --- Power-up states ---
 player_big = False
-big_timer = 0  # Frames remaining (30 sec * 60 FPS = 1800)
-idle_timer = 0  # Tracks how long player has been idle while big
+big_timer = 0
+big_idle_timer = 0
 
-# --- Instructions system ---
-instruction_timer = 0  # Counts down frames to hide instructions
+double_jump_disabled = False
+double_jump_timer = 0
+double_jump_idle_timer = 0
+
+# --- Instructions ---
+instruction_timer = 0
 instructions_to_show = []
-seen_big_instructions = False  # Track if player has seen big power-up instructions
+seen_big_instructions = False
+seen_double_jump_instructions = False
 
-# Pre-create font once for efficiency
 font = pygame.font.SysFont(None, 36)
 
 platform_idle_timer = 0
@@ -73,12 +77,11 @@ def reset_game():
     global player_x, player_y, player_vel_x, player_vel_y
     global platforms, spikes, enemies, score_zones, score, next_zone_x, world_end_x
     global camera_x, jumps_made, jump_pressed
-    global powerups, player_big, big_timer, idle_timer
+    global powerups, player_big, big_timer, big_idle_timer
+    global double_jump_disabled, double_jump_timer, double_jump_idle_timer
     global instruction_timer, instructions_to_show
-    global seen_big_instructions
-
-    platform_idle_timer = 0
-    current_platform_under_player = None
+    global seen_big_instructions, seen_double_jump_instructions
+    global platform_idle_timer, current_platform_under_player
 
     player_x = 100
     player_y = SCREEN_HEIGHT - player_height - 40
@@ -101,9 +104,13 @@ def reset_game():
 
     player_big = False
     big_timer = 0
-    idle_timer = 0
+    big_idle_timer = 0
 
-    instruction_timer = FPS * 5  # Show for 5 seconds
+    double_jump_disabled = False
+    double_jump_timer = 0
+    double_jump_idle_timer = 0
+
+    instruction_timer = FPS * 5
     instructions_to_show[:] = [
         "Use WASD to move",
         "Press W to jump",
@@ -111,8 +118,13 @@ def reset_game():
     ]
 
     seen_big_instructions = False
+    seen_double_jump_instructions = False
+
+    platform_idle_timer = 0
+    current_platform_under_player = None
 
     generate_next_section()
+
 
 def generate_next_section():
     global next_zone_x, world_end_x, platforms, score_zones, spikes, enemies, powerups, score
@@ -129,12 +141,10 @@ def generate_next_section():
         platforms.append(pygame.Rect(plat_x, plat_y, plat_width, 20))
         world_end_x = plat_x + plat_width
 
-        # More spikes with higher chance, placed randomly on platform
         if random.randint(1, 100) <= spike_chance:
             spike_x = plat_x + random.randint(10, plat_width - 30)
             spikes.append(pygame.Rect(spike_x, plat_y - 20, 20, 20))
 
-        # Add enemies with chance
         if random.randint(1, 100) <= enemy_chance:
             enemy_width = 40
             enemy_height = 40
@@ -149,14 +159,16 @@ def generate_next_section():
                 "platform_width": plat_width
             })
 
-        # Power-up spawn chance
+        # Spawn two types of powerups randomly
         if random.randint(1, 100) <= 4:
             powerup_x = plat_x + random.randint(10, plat_width - 20)
             powerup_y = plat_y - 30
-            powerups.append(pygame.Rect(powerup_x, powerup_y, 20, 20))
+            powerup_type = random.choice(["big", "no_double_jump"])
+            powerups.append({"rect": pygame.Rect(powerup_x, powerup_y, 20, 20), "type": powerup_type})
 
         score_zones.append(pygame.Rect(next_zone_x, 0, 20, SCREEN_HEIGHT))
         next_zone_x += 500
+
 
 reset_game()
 
@@ -170,12 +182,11 @@ while running:
 
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_w:
-                max_jumps = 1 if player_big else 2
+                max_jumps = 1 if double_jump_disabled else 2
                 if jumps_made < max_jumps and not jump_pressed:
                     player_vel_y = jump_strength
                     jumps_made += 1
                     jump_pressed = True
-
 
         elif event.type == pygame.KEYUP:
             if event.key == pygame.K_w:
@@ -184,14 +195,24 @@ while running:
     keys = pygame.key.get_pressed()
     player_vel_x = 0
 
-    # Idle timer logic for big player
+    # Idle timers for both power-ups (move or die)
     if player_big:
         if keys[pygame.K_a] or keys[pygame.K_d]:
-            idle_timer = 0  # Reset idle timer when moving
+            big_idle_timer = 0
         else:
-            idle_timer += 1
-            if idle_timer >= 300:  # 5 seconds at 60 FPS
-                print("You were idle too long while big!")
+            big_idle_timer += 1
+            if big_idle_timer >= 300:
+                print("You were idle too long while BIG!")
+                reset_game()
+                continue
+
+    if double_jump_disabled:
+        if keys[pygame.K_a] or keys[pygame.K_d]:
+            double_jump_idle_timer = 0
+        else:
+            double_jump_idle_timer += 1
+            if double_jump_idle_timer >= 300:
+                print("You were idle too long while DOUBLE JUMP DISABLED!")
                 reset_game()
                 continue
 
@@ -207,12 +228,13 @@ while running:
     if player_x < 0:
         player_x = 0
 
-    # Player rect - bigger if big
+    # Player rect size depends only on BIG power-up
     if player_big:
         player_rect = pygame.Rect(player_x, player_y, int(player_width * 1.5), int(player_height * 1.5))
     else:
         player_rect = pygame.Rect(player_x, player_y, player_width, player_height)
 
+    on_ground = False
     current_touching_platform = None
 
     for plat in platforms:
@@ -224,9 +246,9 @@ while running:
                 jumps_made = 0
                 player_rect.y = player_y
                 current_touching_platform = plat
-                break  # Exit loop after landing
+                break
 
-    # Track idle platform time
+    # Platform removal when big and idle too long
     if player_big and on_ground:
         if current_platform_under_player is None:
             current_platform_under_player = current_touching_platform
@@ -264,7 +286,6 @@ while running:
         enemy_rect = enemy["rect"]
         enemy_rect.x += enemy["speed"] * enemy["direction"]
 
-        # Bounce back on platform edges
         if enemy_rect.left < enemy["platform_x"] or enemy_rect.right > enemy["platform_x"] + enemy["platform_width"]:
             enemy["direction"] *= -1
 
@@ -273,45 +294,64 @@ while running:
             reset_game()
             break
 
-    # Power-up pickup (only if not already big)
+    # Power-up pickup
     for p in powerups[:]:
-        if player_rect.colliderect(p):
-            if not player_big:
-                print("You picked up a power-up!")
-                powerups.remove(p)
+        if player_rect.colliderect(p["rect"]):
+            powerups.remove(p)
+            if p["type"] == "big" and not player_big:
+                print("You picked up the BIG power-up!")
                 player_big = True
-                big_timer = 1800  # 30 seconds at 60 FPS
-                idle_timer = 0  # reset idle timer on pickup
+                big_timer = 1800
+                big_idle_timer = 0
 
                 if not seen_big_instructions:
                     instructions_to_show = [
                         "You are THICC!",
                         "Don't stay still while THICC or else die!",
-                        "You can't double jump while THICC!" ]
-                    instruction_timer = FPS * 5  # 5 seconds
-                    seen_big_instructions = True  # Assign directly, no global here
+                        "You can still double jump!"
+                    ]
+                    instruction_timer = FPS * 5
+                    seen_big_instructions = True
+            elif p["type"] == "no_double_jump" and not double_jump_disabled:
+                print("You picked up the NO DOUBLE JUMP power-up!")
+                double_jump_disabled = True
+                double_jump_timer = 1800
+                double_jump_idle_timer = 0
 
-    # Falling off screen
+                if not seen_double_jump_instructions:
+                    instructions_to_show = [
+                        "Double jump disabled!",
+                        "Don't stay still or die!",
+                        "Only 1 jump now!"
+                    ]
+                    instruction_timer = FPS * 5
+                    seen_double_jump_instructions = True
+
+    # Fell off screen
     if player_y > SCREEN_HEIGHT + 100:
         print("You fell!")
         reset_game()
 
-    # Big timer countdown
+    # Timers countdown
     if player_big:
         big_timer -= 1
         if big_timer <= 0:
             player_big = False
-            print("Big effect wore off!")
+            print("Big power-up wore off!")
 
-    # Instruction timer countdown
+    if double_jump_disabled:
+        double_jump_timer -= 1
+        if double_jump_timer <= 0:
+            double_jump_disabled = False
+            print("Double jump restored!")
+
     if instruction_timer > 0:
         instruction_timer -= 1
 
-    # Smooth camera follow
+    # Camera follow
     camera_target = player_x - SCREEN_WIDTH // 2 + player_rect.width // 2
     camera_x += (camera_target - camera_x) * CAMERA_LERP
 
-    # Generate more world as player approaches end
     if world_end_x - player_x < 1000:
         generate_next_section()
 
@@ -324,29 +364,34 @@ while running:
     for enemy in enemies:
         pygame.draw.rect(screen, RED, pygame.Rect(enemy["rect"].x - camera_x, enemy["rect"].y, enemy["rect"].width, enemy["rect"].height))
     for p in powerups:
-        pygame.draw.rect(screen, CYAN, pygame.Rect(p.x - camera_x, p.y, p.width, p.height))
+        color = CYAN if p["type"] == "big" else GREEN
+        pygame.draw.rect(screen, color, pygame.Rect(p["rect"].x - camera_x, p["rect"].y, p["rect"].width, p["rect"].height))
 
-    # Draw player (bigger if big)
     if player_big:
         pygame.draw.rect(screen, BLUE, pygame.Rect(player_x - camera_x, player_y, int(player_width * 1.5), int(player_height * 1.5)))
     else:
         pygame.draw.rect(screen, BLUE, pygame.Rect(player_x - camera_x, player_y, player_width, player_height))
 
-    # Draw score
+    # Score
     score_text = font.render(f"Score: {score}", True, GREEN)
     screen.blit(score_text, (10, 10))
 
-    # Instructions (only show while timer > 0)
+    # Instructions
     if instruction_timer > 0:
         for i, text in enumerate(instructions_to_show):
             msg = font.render(text, True, WHITE)
             screen.blit(msg, (10, 50 + i * 30))
 
-    # Draw big power-up timer if active
+    # Power-up timers display
+    base_y = 50 + (len(instructions_to_show) * 30 if instruction_timer > 0 else 0)
     if player_big:
         seconds_left = big_timer // FPS
-        base_y = 50 + len(instructions_to_show) * 30 if instruction_timer > 0 else 50
         timer_text = font.render(f"BIG power-up time: {seconds_left}s", True, CYAN)
+        screen.blit(timer_text, (10, base_y))
+        base_y += 30
+    if double_jump_disabled:
+        seconds_left = double_jump_timer // FPS
+        timer_text = font.render(f"No Double Jump time: {seconds_left}s", True, GREEN)
         screen.blit(timer_text, (10, base_y))
 
     pygame.display.flip()
